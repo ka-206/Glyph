@@ -102,6 +102,36 @@ function SendIcon() {
   );
 }
 
+function MicIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M12 2c1.66 0 3 1.34 3 3v6c0 1.66-1.34 3-3 3s-3-1.34-3-3V5c0-1.66 1.34-3 3-3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M19 11v2c0 3.31-2.69 6-6 6s-6-2.69-6-6v-2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M12 19v4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M8 23h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PrintIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M6 8V4h12v4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6 8h12v8H6V8Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M9 16V18H15V16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M6 6l12 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M18 6L6 18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 // A small manuscript-style divider: a line, three dots, a line.
 function Divider() {
   return (
@@ -180,6 +210,11 @@ export default function App() {
   const [messageTimes, setMessageTimes] = useState([]); // parallel array of Date, client-side only
   const [question, setQuestion] = useState(""); // current text input value
   const [asking, setAsking] = useState(false); // is /chat in flight?
+  const [speechAvailable, setSpeechAvailable] = useState(false);
+  const [speechActive, setSpeechActive] = useState(false);
+  const [showPdfDialog, setShowPdfDialog] = useState(false);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
+  const [printing, setPrinting] = useState(false);
 
   const [processProgress, setProcessProgress] = useState(0); // simulated 0-100 while indexing
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -187,6 +222,7 @@ export default function App() {
   const fileInputRef = useRef(null);
   const chatAreaRef = useRef(null);
   const progressTimerRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   // Simulate indexing progress: the backend doesn't stream progress
   // events, so this eases toward 90% while the request is in flight and
@@ -231,6 +267,238 @@ export default function App() {
       scrollChatToBottom();
     }
   }, [messages, asking]);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0].transcript)
+        .join(" ");
+      setQuestion((prev) => (prev ? `${prev} ${transcript}` : transcript));
+      setSpeechActive(false);
+    };
+
+    recognition.onerror = () => {
+      setSpeechActive(false);
+    };
+
+    recognition.onend = () => {
+      setSpeechActive(false);
+    };
+
+    recognitionRef.current = recognition;
+    setSpeechAvailable(true);
+  }, []);
+
+  function handleSpeechToggle() {
+    if (!recognitionRef.current) return;
+
+    if (speechActive) {
+      recognitionRef.current.stop();
+      setSpeechActive(false);
+      return;
+    }
+
+    try {
+      recognitionRef.current.start();
+      setSpeechActive(true);
+    } catch (err) {
+      setSpeechActive(false);
+    }
+  }
+
+  async function handleEndChat() {
+    try {
+      await fetch(`${API_URL}/reset`, { method: "POST" });
+    } catch (err) {
+      console.warn("Failed to reset backend state", err);
+    }
+
+    setFiles([]);
+    setProcessed(false);
+    setProcessing(false);
+    setUploadStatus("");
+    setUploadError(false);
+    setZoneOpen(true);
+    setMessages([]);
+    setMessageTimes([]);
+    setQuestion("");
+    setAsking(false);
+    setProcessProgress(0);
+    setShowPdfDialog(false);
+
+    if (pdfBlobUrl) {
+      URL.revokeObjectURL(pdfBlobUrl);
+      setPdfBlobUrl(null);
+    }
+  }
+
+  function parseInlineMarkdown(text) {
+    const segments = [];
+    let remaining = text;
+    const boldRegex = /(\*\*([^*]+)\*\*)/;
+
+    while (remaining.length) {
+      const match = remaining.match(boldRegex);
+      if (!match) {
+        segments.push({ text: remaining });
+        break;
+      }
+
+      const [fullMatch, , innerText] = match;
+      const index = match.index || 0;
+      if (index > 0) {
+        segments.push({ text: remaining.slice(0, index) });
+      }
+
+      segments.push({ text: innerText, bold: true });
+      remaining = remaining.slice(index + fullMatch.length);
+    }
+
+    return segments;
+  }
+
+  function parseMarkdownToPdf(content) {
+    const lines = content.split("\n");
+    const body = [];
+    let tableLines = [];
+    let listItems = [];
+
+    const flushTable = () => {
+      if (!tableLines.length) return;
+      const rows = tableLines
+        .filter(Boolean)
+        .map((line) => line.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()));
+
+      if (rows.length >= 2 && rows[1].every((cell) => /^:?-+:?$/.test(cell))) {
+        const header = rows[0];
+        const bodyRows = rows.slice(2);
+        const tableBody = [
+          header.map((cell) => ({ text: cell || "", style: "tableHeader" })),
+          ...bodyRows.map((row) => row.map((cell) => ({ text: cell || "", style: "tableCell" }))),
+        ];
+        body.push({
+          table: { widths: header.map(() => "*"), body: tableBody },
+          layout: "lightHorizontalLines",
+          margin: [0, 6, 0, 12],
+        });
+      }
+      tableLines = [];
+    };
+
+    const flushList = () => {
+      if (!listItems.length) return;
+      body.push({ ul: listItems, margin: [0, 0, 0, 10] });
+      listItems = [];
+    };
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+        tableLines.push(trimmed);
+        continue;
+      }
+
+      if (tableLines.length) {
+        flushTable();
+      }
+
+      if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+        const itemText = trimmed.slice(2).trim();
+        listItems.push({ text: parseInlineMarkdown(itemText) });
+        continue;
+      }
+
+      if (listItems.length) {
+        flushList();
+      }
+
+      if (!trimmed) {
+        body.push({ text: "", margin: [0, 4, 0, 4] });
+        continue;
+      }
+
+      body.push({ text: parseInlineMarkdown(trimmed), margin: [0, 0, 0, 6] });
+    }
+
+    if (tableLines.length) {
+      flushTable();
+    }
+    flushList();
+    return body;
+  }
+
+  async function handlePrintPdf() {
+    if (printing) return;
+    setPrinting(true);
+
+    try {
+      const fileNames = files.length ? files.map((f) => f.name).join(", ") : "No indexed PDF files.";
+      const content = [
+        { text: "Glyph PDF Export", style: "header" },
+        { text: `Generated: ${new Date().toLocaleString()}`, style: "subheader" },
+        { text: `Indexed files: ${fileNames}
+`, margin: [0, 0, 0, 10] },
+        ...messages.flatMap((message) => [
+          { text: `${message.role === "user" ? "You" : "Glyph"}:`, style: "messageRole" },
+          ...parseMarkdownToPdf(message.content),
+        ]),
+      ];
+
+      const docDefinition = {
+        content,
+        styles: {
+          header: { fontSize: 18, bold: true, margin: [0, 0, 0, 10] },
+          subheader: { fontSize: 10, italics: true, margin: [0, 0, 0, 12] },
+          messageRole: { bold: true, margin: [0, 10, 0, 4] },
+          tableHeader: { bold: true, fillColor: "#f2f2f2", margin: [0, 4, 0, 4] },
+          tableCell: { margin: [0, 4, 0, 4] },
+        },
+        defaultStyle: {
+          fontSize: 11,
+          lineHeight: 1.4,
+        },
+        pageMargins: [40, 40, 40, 40],
+      };
+
+      const pdfMakeInstance = window.pdfMake;
+      if (!pdfMakeInstance) {
+        throw new Error("pdfMake is not available. Make sure the CDN scripts are loaded.");
+      }
+
+      const blob = await new Promise((resolve, reject) => {
+        pdfMakeInstance.createPdf(docDefinition).getBlob((result) => {
+          if (result instanceof Blob) resolve(result);
+          else reject(new Error("Failed to generate PDF blob."));
+        });
+      });
+
+      const url = URL.createObjectURL(blob);
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+      }
+      setPdfBlobUrl(url);
+      setShowPdfDialog(true);
+    } catch (err) {
+      console.error("PDF generation failed", err);
+    } finally {
+      setPrinting(false);
+    }
+  }
+
+  function handleDragOver(e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleAsk(e);
+    }
+  }
 
   // --- File selection / drag & drop ---
 
@@ -379,6 +647,21 @@ export default function App() {
           <GlyphMark active={processing || asking} />
           <h1>Glyph</h1>
         </div>
+
+        <div className="top-actions">
+          <button
+            type="button"
+            className="top-action-btn"
+            onClick={handlePrintPdf}
+            disabled={printing}
+          >
+            <PrintIcon /> {printing ? "Preparing PDF…" : "Print PDF"}
+          </button>
+          <button type="button" className="top-action-btn danger" onClick={handleEndChat}>
+            End chat
+          </button>
+        </div>
+
         <p className="tagline">Ask your documents anything.</p>
         <Divider />
 
@@ -507,6 +790,18 @@ export default function App() {
       </div>
 
       <form className="input-row" onSubmit={handleAsk}>
+        {speechAvailable && (
+          <button
+            type="button"
+            className={`mic-btn ${speechActive ? "active" : ""}`}
+            onClick={handleSpeechToggle}
+            disabled={!processed || asking}
+            aria-label={speechActive ? "Stop speech input" : "Start speech input"}
+          >
+            <MicIcon />
+          </button>
+        )}
+
         <textarea
           rows={1}
           placeholder={
@@ -526,6 +821,35 @@ export default function App() {
         </button>
       </form>
       <p className="input-hint">↵ SEND · SHIFT+↵ NEWLINE</p>
+
+      {showPdfDialog && (
+        <div className="pdf-dialog-backdrop">
+          <div className="pdf-dialog" role="dialog" aria-modal="true">
+            <button
+              type="button"
+              className="dialog-close"
+              aria-label="Close PDF ready dialog"
+              onClick={() => setShowPdfDialog(false)}
+            >
+              <CloseIcon />
+            </button>
+            <p className="dialog-title">Your PDF is ready.</p>
+            <p className="dialog-text">Download your export using the button below.</p>
+            <div className="dialog-actions">
+              <a className="download-btn" href={pdfBlobUrl} download="glyph-export.pdf">
+                Download PDF
+              </a>
+              <button
+                type="button"
+                className="dialog-secondary"
+                onClick={() => setShowPdfDialog(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <HelpButton />
     </div>

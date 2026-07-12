@@ -24,6 +24,46 @@
   margin-bottom: 0.25rem;
 }
 
+.top-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.top-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--ink-line);
+  color: var(--parchment);
+  font-size: 0.82rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.top-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: var(--gilt);
+}
+
+.top-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.top-action-btn.danger {
+  color: #f0c5b8;
+}
+
+.top-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .header h1 {
   font-family: var(--font-display);
   font-weight: 700;
@@ -562,6 +602,31 @@
   border-top: 1px solid var(--ink-line);
   padding-top: 1rem;
   flex-shrink: 0;
+  align-items: stretch;
+}
+
+.mic-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  min-width: 3rem;
+  background: transparent;
+  border: 1px solid var(--ink-line);
+  border-radius: 12px;
+  color: var(--gilt);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.mic-btn.active {
+  background: rgba(201, 162, 39, 0.18);
+  color: var(--gilt-bright);
+}
+
+.mic-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .input-row textarea {
@@ -685,7 +750,85 @@
   .header h1 {
     font-size: 1.7rem;
   }
+  .top-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
   .message {
     max-width: 92%;
   }
+}
+
+.pdf-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 30;
+}
+
+.pdf-dialog {
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: 16px;
+  padding: 1.75rem;
+  width: min(420px, 100%);
+  position: relative;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+}
+
+.dialog-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: transparent;
+  border: none;
+  color: var(--parchment-dim);
+  cursor: pointer;
+}
+
+.dialog-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  color: var(--parchment);
+}
+
+.dialog-text {
+  margin: 0 0 1.25rem;
+  color: var(--parchment-dim);
+  line-height: 1.5;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.download-btn,
+.dialog-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  padding: 0.7rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--ink-line);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.download-btn {
+  background: var(--gilt);
+  color: var(--ink);
+  border-color: transparent;
+}
+
+.dialog-secondary {
+  color: var(--parchment);
+  background: transparent;
 }
