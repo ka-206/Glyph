@@ -1,0 +1,47 @@
+/* ---- Design tokens ----
+   Ink-and-gilt manuscript palette: deep ink background, a warm gilt-gold
+   accent (the "illumination"), and a muted parchment tone for readable
+   text. Everything in App.css references these variables instead of
+   hardcoding colors, so the whole palette can be tuned from one place. */
+:root {
+  --ink: #0e0d12;
+  --ink-raised: #17151d;
+  --ink-line: #2a2733;
+  --parchment: #ece6d9;
+  --parchment-dim: #9c968c;
+  --gilt: #c9a227;
+  --gilt-bright: #e6c14f;
+  --error: #c0503d;
+
+  --font-display: "Fraunces", serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ink);
+  color: var(--parchment);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* Visible keyboard focus everywhere, for accessibility */
+:focus-visible {
+  outline: 2px solid var(--gilt-bright);
+  outline-offset: 2px;
+}
