@@ -6,6 +6,47 @@ import "./App.css";
 // The URL of your FastAPI backend. In development it's your local
 // uvicorn server; when you deploy, you'll change this (see .env.example).
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const STORAGE_KEY = "glyph-app-state";
+
+function loadAppState() {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      ...parsed,
+      messageTimes: Array.isArray(parsed.messageTimes)
+        ? parsed.messageTimes.map((ts) => new Date(ts))
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveAppState(state) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const serialized = JSON.stringify({
+      ...state,
+      files: Array.isArray(state.files)
+        ? state.files.map((file) => ({ name: file.name }))
+        : [],
+      messageTimes: Array.isArray(state.messageTimes)
+        ? state.messageTimes.map((date) => date.toISOString())
+        : [],
+    });
+    window.localStorage.setItem(STORAGE_KEY, serialized);
+  } catch {
+    // ignore storage failures; app still works normally
+  }
+}
+
+function clearAppState() {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  window.localStorage.removeItem(STORAGE_KEY);
+}
 
 // --- Small inline icons (kept dependency-free, same approach as the
 // original hand-drawn glyph mark) ---
@@ -113,6 +154,34 @@ function MicIcon() {
   );
 }
 
+function SpeakerIcon({ active }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path
+        d="M4 9v6h4l5 4V5L8 9H4Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      {active ? (
+        <path
+          d="M18.5 8.5a5 5 0 0 1 0 7M21 6a8.5 8.5 0 0 1 0 12"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+      ) : (
+        <path
+          d="M17.5 9.5a3.5 3.5 0 0 1 0 5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
+  );
+}
+
 function PrintIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -198,20 +267,25 @@ function formatTime(date) {
 export default function App() {
   // --- React state ---
 
-  const [files, setFiles] = useState([]); // PDFs chosen but not yet uploaded
-  const [processed, setProcessed] = useState(false); // has /upload succeeded?
-  const [processing, setProcessing] = useState(false); // is /upload in flight?
-  const [uploadStatus, setUploadStatus] = useState(""); // status/error text
-  const [uploadError, setUploadError] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [zoneOpen, setZoneOpen] = useState(true); // upload zone expanded vs collapsed summary
+  const savedState = loadAppState();
 
-  const [messages, setMessages] = useState([]); // [{role, content}, ...]
-  const [messageTimes, setMessageTimes] = useState([]); // parallel array of Date, client-side only
+  const [files, setFiles] = useState(() => savedState?.files ?? []); // PDFs chosen but not yet uploaded
+  const [processed, setProcessed] = useState(() => Boolean(savedState?.processed)); // has /upload succeeded?
+  const [sessionId, setSessionId] = useState(() => savedState?.sessionId || null); // backend session key, set once /upload succeeds
+  const [processing, setProcessing] = useState(false); // is /upload in flight?
+  const [uploadStatus, setUploadStatus] = useState(() => savedState?.uploadStatus || ""); // status/error text
+  const [uploadError, setUploadError] = useState(() => Boolean(savedState?.uploadError));
+  const [dragOver, setDragOver] = useState(false);
+  const [zoneOpen, setZoneOpen] = useState(() => savedState?.zoneOpen !== false); // upload zone expanded vs collapsed summary
+
+  const [messages, setMessages] = useState(() => savedState?.messages ?? []); // [{role, content}, ...]
+  const [messageTimes, setMessageTimes] = useState(() => savedState?.messageTimes ?? []); // parallel array of Date, client-side only
   const [question, setQuestion] = useState(""); // current text input value
   const [asking, setAsking] = useState(false); // is /chat in flight?
   const [speechAvailable, setSpeechAvailable] = useState(false);
   const [speechActive, setSpeechActive] = useState(false);
+  const [ttsAvailable, setTtsAvailable] = useState(false);
+  const [speakingIndex, setSpeakingIndex] = useState(null); // index of message currently read aloud, or null
   const [showPdfDialog, setShowPdfDialog] = useState(false);
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
   const [printing, setPrinting] = useState(false);
@@ -223,6 +297,37 @@ export default function App() {
   const chatAreaRef = useRef(null);
   const progressTimerRef = useRef(null);
   const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    saveAppState({
+      files,
+      processed,
+      sessionId,
+      uploadStatus,
+      uploadError,
+      zoneOpen,
+      messages,
+      messageTimes,
+    });
+  }, [files, processed, sessionId, uploadStatus, uploadError, zoneOpen, messages, messageTimes]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveAppState({
+        files,
+        processed,
+        sessionId,
+        uploadStatus,
+        uploadError,
+        zoneOpen,
+        messages,
+        messageTimes,
+      });
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [files, processed, sessionId, uploadStatus, uploadError, zoneOpen, messages, messageTimes]);
 
   // Simulate indexing progress: the backend doesn't stream progress
   // events, so this eases toward 90% while the request is in flight and
@@ -297,6 +402,18 @@ export default function App() {
     setSpeechAvailable(true);
   }, []);
 
+  useEffect(() => {
+    if (window.speechSynthesis) {
+      setTtsAvailable(true);
+    }
+    // Stop any speech in progress if the component unmounts.
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
   function handleSpeechToggle() {
     if (!recognitionRef.current) return;
 
@@ -316,13 +433,18 @@ export default function App() {
 
   async function handleEndChat() {
     try {
-      await fetch(`${API_URL}/reset`, { method: "POST" });
+      await fetch(`${API_URL}/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sessionId ? { session_id: sessionId } : {}),
+      });
     } catch (err) {
       console.warn("Failed to reset backend state", err);
     }
 
     setFiles([]);
     setProcessed(false);
+    setSessionId(null);
     setProcessing(false);
     setUploadStatus("");
     setUploadError(false);
@@ -334,10 +456,54 @@ export default function App() {
     setProcessProgress(0);
     setShowPdfDialog(false);
 
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setSpeakingIndex(null);
+
     if (pdfBlobUrl) {
       URL.revokeObjectURL(pdfBlobUrl);
       setPdfBlobUrl(null);
     }
+
+    clearAppState();
+  }
+
+  // Strips markdown syntax down to plain, readable text — speech
+  // synthesis has no use for **, #, |, or bullet markers.
+  function stripMarkdownForSpeech(text) {
+    return text
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/[*_#>]+/g, "")
+      .replace(/^\s*[-|]\s*/gm, "")
+      .replace(/\|/g, ", ")
+      .replace(/\n{2,}/g, ". ")
+      .replace(/\n/g, " ")
+      .trim();
+  }
+
+  function toggleSpeak(index, content) {
+    if (!ttsAvailable) return;
+
+    // Clicking the speaker on the message already playing stops it.
+    if (speakingIndex === index) {
+      window.speechSynthesis.cancel();
+      setSpeakingIndex(null);
+      return;
+    }
+
+    // Only one reply plays at a time.
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(stripMarkdownForSpeech(content));
+    utterance.onend = () => setSpeakingIndex(null);
+    utterance.onerror = () => setSpeakingIndex(null);
+
+    window.speechSynthesis.speak(utterance);
+    setSpeakingIndex(index);
   }
 
   function parseInlineMarkdown(text) {
@@ -566,6 +732,7 @@ export default function App() {
 
       setProcessProgress(100);
       setProcessed(true);
+      setSessionId(data.session_id);
       setUploadStatus(data.message);
       setZoneOpen(false); // collapse into the "N documents indexed" summary bar
 
@@ -595,6 +762,15 @@ export default function App() {
     const trimmed = question.trim();
     if (!trimmed || asking) return;
 
+    if (!sessionId) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "⚠ Please upload and process PDFs first." },
+      ]);
+      setMessageTimes((prev) => [...prev, new Date()]);
+      return;
+    }
+
     // Optimistically show the user's message immediately.
     setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
     setMessageTimes((prev) => [...prev, new Date()]);
@@ -605,12 +781,19 @@ export default function App() {
       const response = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed }),
+        body: JSON.stringify({ session_id: sessionId, question: trimmed }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        // The backend evicts idle sessions after an hour (see main.py).
+        // If that's what happened, prompt the person to re-index instead
+        // of leaving them stuck typing into a dead session.
+        if (response.status === 400 && /session/i.test(data.detail || "")) {
+          setProcessed(false);
+          setSessionId(null);
+        }
         throw new Error(data.detail || "Something went wrong.");
       }
 
@@ -642,7 +825,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="top-fixed">
+      <div className="top-bar">
         <div className="header">
           <GlyphMark active={processing || asking} />
           <h1>Glyph</h1>
@@ -661,166 +844,185 @@ export default function App() {
             End chat
           </button>
         </div>
+      </div>
 
-        <p className="tagline">Ask your documents anything.</p>
-        <Divider />
+      <p className="tagline">Ask your documents anything.</p>
+      <Divider />
 
-        <div
-          className={`upload-zone ${dragOver ? "drag-over" : ""}`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
-          {processed && (
-            <button
-              className={`zone-summary ${zoneOpen ? "open" : ""}`}
-              onClick={() => setZoneOpen((o) => !o)}
-              aria-expanded={zoneOpen}
-            >
-              <span>
-                <span className="spark-char">✦</span> {files.length} document
-                {files.length > 1 ? "s" : ""} indexed
-              </span>
-              <ChevronIcon open={zoneOpen} />
-            </button>
-          )}
-
-          <div className={`zone-panel ${!processed || zoneOpen ? "open" : "closed"}`}>
-            <div className="zone-panel-inner">
-              <div className="upload-row centered">
-                <p className="drop-text">
-                  {files.length > 0 ? "Drop more PDFs, or" : "Drop PDF files here, or"}
-                </p>
-                <label className="upload-label">
-                  Choose PDFs
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="application/pdf"
-                    multiple
-                    onChange={handleFileChange}
-                    style={{ display: "none" }}
-                  />
-                </label>
-              </div>
-
-              {files.length > 0 && (
-                <ul className="file-list">
-                  {files.map((f, idx) => (
-                    <li key={f.name}>
-                      <span className="file-index">{String(idx + 1).padStart(2, "0")}</span>
-                      <FileIcon />
-                      <span className="file-name">{f.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {files.length > 0 && !processing && (
-                <button
-                  className="process-btn full"
-                  onClick={handleProcess}
-                  disabled={processing}
-                >
-                  Process documents
-                </button>
-              )}
-
-              {(processing || processProgress > 0) && (
-                <div className="progress-block">
-                  <div className="progress-track">
-                    <div className="progress-fill" style={{ width: `${processProgress}%` }} />
-                  </div>
-                  <div className="progress-row">
-                    <span>Indexing documents…</span>
-                    <span>{Math.round(processProgress)}%</span>
-                  </div>
+      <div className="main-layout">
+        <div className="chat-column">
+          <div className="chat-area-wrap">
+            <div className="chat-area" ref={chatAreaRef} onScroll={handleChatScroll}>
+              {messages.length === 0 && (
+                <div className="empty-state">
+                  <SparkleMark />
+                  <p>{processed ? "Ask your first question below." : "// no documents indexed"}</p>
                 </div>
               )}
 
-              {uploadStatus && !processing && (
-                <p className={`status-line ${uploadError ? "error" : ""}`}>{uploadStatus}</p>
-              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`message ${m.role}`}>
+                  {m.role === "user" && messageTimes[i] && (
+                    <span className="msg-time">{formatTime(messageTimes[i])}</span>
+                  )}
+
+                  <div className="message-body">
+                    {m.role === "assistant" ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    ) : (
+                      m.content
+                    )}
+                  </div>
+
+                  {m.role === "assistant" && messageTimes[i] && (
+                    <div className="msg-footer">
+                      <span className="msg-time msg-time-below">{formatTime(messageTimes[i])}</span>
+                      {ttsAvailable && (
+                        <button
+                          type="button"
+                          className={`speaker-btn ${speakingIndex === i ? "active" : ""}`}
+                          onClick={() => toggleSpeak(i, m.content)}
+                          aria-label={speakingIndex === i ? "Stop reading reply aloud" : "Read reply aloud"}
+                        >
+                          <SpeakerIcon active={speakingIndex === i} />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {asking && <TypingDots />}
+            </div>
+
+            {showScrollBtn && (
+              <button
+                className="scroll-bottom-btn"
+                onClick={() => scrollChatToBottom()}
+                aria-label="Scroll to latest message"
+              >
+                <ChevronIcon open={false} />
+              </button>
+            )}
+          </div>
+
+          <form className="input-row" onSubmit={handleAsk}>
+            {speechAvailable && (
+              <button
+                type="button"
+                className={`mic-btn ${speechActive ? "active" : ""}`}
+                onClick={handleSpeechToggle}
+                disabled={!processed || asking}
+                aria-label={speechActive ? "Stop speech input" : "Start speech input"}
+              >
+                <MicIcon />
+              </button>
+            )}
+
+            <textarea
+              rows={1}
+              placeholder={
+                processed ? "Ask a question about your documents…" : "Index documents on the right to begin"
+              }
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={handleInputKeyDown}
+              disabled={!processed || asking}
+            />
+            <button
+              type="submit"
+              className="ask-btn"
+              disabled={!processed || asking || !question.trim()}
+            >
+              Ask <SendIcon />
+            </button>
+          </form>
+          <p className="input-hint">↵ SEND · SHIFT+↵ NEWLINE</p>
+        </div>
+
+        <div className="side-column">
+          <h2 className="side-heading">Documents</h2>
+          <div
+            className={`upload-zone ${dragOver ? "drag-over" : ""}`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {processed && (
+              <button
+                className={`zone-summary ${zoneOpen ? "open" : ""}`}
+                onClick={() => setZoneOpen((o) => !o)}
+                aria-expanded={zoneOpen}
+              >
+                <span>
+                  <span className="spark-char">✦</span> {files.length} document
+                  {files.length > 1 ? "s" : ""} indexed
+                </span>
+                <ChevronIcon open={zoneOpen} />
+              </button>
+            )}
+
+            <div className={`zone-panel ${!processed || zoneOpen ? "open" : "closed"}`}>
+              <div className="zone-panel-inner">
+                <div className="upload-row centered">
+                  <p className="drop-text">
+                    {files.length > 0 ? "Drop more PDFs, or" : "Drop PDF files here, or"}
+                  </p>
+                  <label className="upload-label">
+                    Choose PDFs
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="application/pdf"
+                      multiple
+                      onChange={handleFileChange}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                </div>
+
+                {files.length > 0 && (
+                  <ul className="file-list">
+                    {files.map((f, idx) => (
+                      <li key={f.name}>
+                        <span className="file-index">{String(idx + 1).padStart(2, "0")}</span>
+                        <FileIcon />
+                        <span className="file-name">{f.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {files.length > 0 && !processing && (
+                  <button
+                    className="process-btn full"
+                    onClick={handleProcess}
+                    disabled={processing}
+                  >
+                    Process documents
+                  </button>
+                )}
+
+                {(processing || processProgress > 0) && (
+                  <div className="progress-block">
+                    <div className="progress-track">
+                      <div className="progress-fill" style={{ width: `${processProgress}%` }} />
+                    </div>
+                    <div className="progress-row">
+                      <span>Indexing documents…</span>
+                      <span>{Math.round(processProgress)}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {uploadStatus && !processing && (
+                  <p className={`status-line ${uploadError ? "error" : ""}`}>{uploadStatus}</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
-
-      <div className="chat-area-wrap">
-        <div className="chat-area" ref={chatAreaRef} onScroll={handleChatScroll}>
-          {messages.length === 0 && (
-            <div className="empty-state">
-              <SparkleMark />
-              <p>{processed ? "Ask your first question below." : "// no documents indexed"}</p>
-            </div>
-          )}
-
-          {messages.map((m, i) => (
-            <div key={i} className={`message ${m.role}`}>
-              {m.role === "user" && messageTimes[i] && (
-                <span className="msg-time">{formatTime(messageTimes[i])}</span>
-              )}
-
-              <div className="message-body">
-                {m.role === "assistant" ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                ) : (
-                  m.content
-                )}
-              </div>
-
-              {m.role === "assistant" && messageTimes[i] && (
-                <span className="msg-time msg-time-below">{formatTime(messageTimes[i])}</span>
-              )}
-            </div>
-          ))}
-
-          {asking && <TypingDots />}
-        </div>
-
-        {showScrollBtn && (
-          <button
-            className="scroll-bottom-btn"
-            onClick={() => scrollChatToBottom()}
-            aria-label="Scroll to latest message"
-          >
-            <ChevronIcon open={false} />
-          </button>
-        )}
-      </div>
-
-      <form className="input-row" onSubmit={handleAsk}>
-        {speechAvailable && (
-          <button
-            type="button"
-            className={`mic-btn ${speechActive ? "active" : ""}`}
-            onClick={handleSpeechToggle}
-            disabled={!processed || asking}
-            aria-label={speechActive ? "Stop speech input" : "Start speech input"}
-          >
-            <MicIcon />
-          </button>
-        )}
-
-        <textarea
-          rows={1}
-          placeholder={
-            processed ? "Ask a question about your documents…" : "Index documents above to begin"
-          }
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={handleInputKeyDown}
-          disabled={!processed || asking}
-        />
-        <button
-          type="submit"
-          className="ask-btn"
-          disabled={!processed || asking || !question.trim()}
-        >
-          Ask <SendIcon />
-        </button>
-      </form>
-      <p className="input-hint">↵ SEND · SHIFT+↵ NEWLINE</p>
 
       {showPdfDialog && (
         <div className="pdf-dialog-backdrop">

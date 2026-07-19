@@ -14,6 +14,10 @@ interactive API tester for you. This is one of the best ways to learn
 what your API does before you even touch the frontend.
 """
 
+import time
+import uuid
+from typing import Optional
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -42,13 +46,36 @@ app.add_middleware(
 )
 
 # --- State ---
-# Streamlit gave you st.session_state for free. FastAPI doesn't have that
-# concept — a "server" just handles requests, it doesn't inherently
-# remember anything between them. For a simple single-user demo, a plain
-# global variable is enough. (For multiple simultaneous users you'd need
-# a session-id system or a database — a good "phase 2" upgrade, not needed
-# to get started.)
-conversation_chain = None
+# A single global `conversation_chain` variable would mean every visitor
+# shares the same documents and chat history — fine for a solo local demo,
+# but broken the moment two people use the deployed app at once (one
+# person's questions would get answered from someone else's PDFs).
+#
+# Instead, each browser session gets its own entry in this dict, keyed by
+# a session_id the frontend generates on upload and sends back with every
+# /chat and /reset call. This is still in-memory (lost on server restart —
+# see the FAISS-persistence note in rag.py if you want that to survive
+# restarts too), but it's now isolated per user instead of shared.
+sessions: dict[str, dict] = {}
+# Each entry: {"chain": ConversationalRetrievalChain, "last_used": float}
+
+# How long an idle session is kept before it's swept away, so memory
+# doesn't grow forever from people who close the tab without hitting
+# "End chat". Not a hard timeout on activity — every /chat call refreshes
+# last_used, so an active conversation is never evicted mid-use.
+SESSION_TTL_SECONDS = 60 * 60  # 1 hour
+
+
+def _cleanup_sessions() -> None:
+    """Drop sessions that have been idle longer than SESSION_TTL_SECONDS."""
+    now = time.time()
+    stale_ids = [
+        sid
+        for sid, data in sessions.items()
+        if now - data["last_used"] > SESSION_TTL_SECONDS
+    ]
+    for sid in stale_ids:
+        del sessions[sid]
 
 
 # --- Request/response shapes ---
@@ -56,7 +83,12 @@ conversation_chain = None
 # FastAPI uses this to validate incoming data automatically and to
 # generate the /docs page.
 class Question(BaseModel):
+    session_id: str
     question: str
+
+
+class SessionRequest(BaseModel):
+    session_id: str
 
 
 @app.get("/health")
@@ -69,9 +101,13 @@ async def health():
 async def upload_pdfs(files: list[UploadFile] = File(...)):
     """
     Accepts one or more PDF files, processes them into a vector store,
-    and builds a fresh conversation chain.
+    and builds a fresh conversation chain under a brand-new session_id.
+
+    Each call to /upload starts a new session — processing documents is
+    already "start fresh" from the user's point of view, so there's no
+    need to accept an existing session_id here.
     """
-    global conversation_chain
+    _cleanup_sessions()
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
@@ -90,7 +126,11 @@ async def upload_pdfs(files: list[UploadFile] = File(...)):
     vector_store = get_vector_store(text_chunks)
     conversation_chain = get_conversation_chain(vector_store)
 
+    session_id = uuid.uuid4().hex
+    sessions[session_id] = {"chain": conversation_chain, "last_used": time.time()}
+
     return {
+        "session_id": session_id,
         "message": f"Processed {len(files)} file(s) into {len(text_chunks)} chunks.",
         "chunks": len(text_chunks),
     }
@@ -99,19 +139,22 @@ async def upload_pdfs(files: list[UploadFile] = File(...)):
 @app.post("/chat")
 async def chat(payload: Question):
     """
-    Accepts a question, runs it through the conversation chain, and
-    returns the answer plus the full chat history.
+    Accepts a session_id + question, runs it through that session's
+    conversation chain, and returns the answer plus the full chat history.
     """
-    global conversation_chain
+    _cleanup_sessions()
 
-    if conversation_chain is None:
+    session = sessions.get(payload.session_id)
+    if session is None:
         raise HTTPException(
             status_code=400,
-            detail="Please upload and process PDFs first.",
+            detail="Session not found or expired. Please upload and process PDFs again.",
         )
 
+    session["last_used"] = time.time()
+
     try:
-        response = conversation_chain.invoke({"question": payload.question})
+        response = session["chain"].invoke({"question": payload.question})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -128,8 +171,12 @@ async def chat(payload: Question):
 
 
 @app.post("/reset")
-async def reset():
-    """Clears the current conversation, so a user can start over."""
-    global conversation_chain
-    conversation_chain = None
+async def reset(payload: Optional[SessionRequest] = None):
+    """
+    Clears one session so its user can start over. Accepts an optional
+    body so a stray /reset call without a session_id (e.g. right after
+    page load, before anything's been processed) doesn't error out.
+    """
+    if payload is not None:
+        sessions.pop(payload.session_id, None)
     return {"message": "Conversation reset."}

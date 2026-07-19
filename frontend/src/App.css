@@ -4,31 +4,70 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  max-width: 760px;
+  max-width: 1180px;
   margin: 0 auto;
-  padding: 2.5rem 1.5rem 1.5rem;
+  padding: 2rem 1.5rem 1.5rem;
 }
 
-/* Everything above the scrolling chat log — header, tagline, divider,
-   upload zone — stays pinned in place instead of scrolling away. */
-.top-fixed {
+/* ---- Top bar: title left, actions right, on one row ---- */
+.top-bar {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.25rem;
 }
 
 /* ---- Header ---- */
 .header {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 0.75rem;
-  margin-bottom: 0.25rem;
 }
 
 .top-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.65rem;
-  margin-bottom: 0.75rem;
+}
+
+/* ---- Main two-column layout: chat on the left, document
+   ingestion/processing on the right. Stacks vertically on narrow
+   viewports (see the media query at the bottom of this file). ---- */
+.main-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 1.75rem;
+  align-items: stretch;
+}
+
+.chat-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.side-column {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding-left: 1.75rem;
+  border-left: 1px solid var(--ink-line);
+}
+
+.side-heading {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.1rem;
+  margin: 0.1rem 0 1rem;
+  color: var(--parchment);
 }
 
 .top-action-btn {
@@ -476,8 +515,54 @@
 }
 
 .msg-time-below {
-  margin-top: 0.5rem;
+  margin-top: 0;
   margin-bottom: 0;
+}
+
+/* Row beneath each assistant reply: timestamp on the left, speaker
+   button on the right. */
+.msg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.speaker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--parchment-dim);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.speaker-btn:hover {
+  color: var(--gilt-bright);
+  background: rgba(201, 162, 39, 0.12);
+}
+
+.speaker-btn.active {
+  color: var(--gilt-bright);
+  animation: glyph-pulse 1.4s ease-in-out infinite;
+}
+
+.speaker-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .speaker-btn.active {
+    animation: none;
+  }
 }
 
 .chevron {
@@ -746,6 +831,28 @@
   margin-bottom: 0.35rem;
 }
 
+/* Below this width, stop putting chat and documents side by side —
+   a 320px sidebar squeezes the chat too hard. Documents move above
+   the chat instead, collapsible via the same zone-summary bar. */
+@media (max-width: 860px) {
+  .main-layout {
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+  .side-column {
+    width: auto;
+    flex-shrink: 0;
+    max-height: 42vh;
+    padding-left: 0;
+    padding-bottom: 1.25rem;
+    border-left: none;
+    border-bottom: 1px solid var(--ink-line);
+  }
+  .chat-column {
+    flex: 1;
+  }
+}
+
 @media (max-width: 480px) {
   .header h1 {
     font-size: 1.7rem;
@@ -756,6 +863,9 @@
   }
   .message {
     max-width: 92%;
+  }
+  .side-column {
+    max-height: 46vh;
   }
 }
 
