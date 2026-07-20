@@ -7,6 +7,9 @@ import "./App.css";
 // uvicorn server; when you deploy, you'll change this (see .env.example).
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 const STORAGE_KEY = "glyph-app-state";
+const MAX_UPLOAD_FILES = 3;
+const MAX_UPLOAD_FILE_SIZE = 10 * 1000 * 1000; // 10 MB
+const MAX_TOTAL_UPLOAD_SIZE = 30 * 1000 * 1000; // 30 MB
 
 function loadAppState() {
   if (typeof window === "undefined" || !window.localStorage) return null;
@@ -264,6 +267,41 @@ function formatTime(date) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatBytes(bytes) {
+  if (bytes < 1000) return `${bytes} B`;
+  const kb = bytes / 1000;
+  if (kb < 1000) return `${kb.toFixed(1)} KB`;
+  return `${(kb / 1000).toFixed(1)} MB`;
+}
+
+function validatePdfFiles(files) {
+  if (files.length === 0) return { valid: false, error: "" };
+  if (files.length > MAX_UPLOAD_FILES) {
+    return {
+      valid: false,
+      error: `Upload limit is ${MAX_UPLOAD_FILES} PDFs. Remove ${files.length - MAX_UPLOAD_FILES} file(s).`,
+    };
+  }
+
+  const oversized = files.filter((file) => file.size > MAX_UPLOAD_FILE_SIZE);
+  if (oversized.length > 0) {
+    return {
+      valid: false,
+      error: `${oversized.length} file(s) exceed the ${formatBytes(MAX_UPLOAD_FILE_SIZE)} limit.`,
+    };
+  }
+
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  if (totalSize > MAX_TOTAL_UPLOAD_SIZE) {
+    return {
+      valid: false,
+      error: `Total upload size exceeds ${formatBytes(MAX_TOTAL_UPLOAD_SIZE)}.`,
+    };
+  }
+
+  return { valid: true, error: "" };
+}
+
 export default function App() {
   // --- React state ---
 
@@ -292,6 +330,8 @@ export default function App() {
 
   const [processProgress, setProcessProgress] = useState(0); // simulated 0-100 while indexing
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+
+  const uploadValidation = validatePdfFiles(files);
 
   const fileInputRef = useRef(null);
   const chatAreaRef = useRef(null);
@@ -711,6 +751,13 @@ export default function App() {
       return;
     }
 
+    const validation = validatePdfFiles(files);
+    if (!validation.valid) {
+      setUploadError(true);
+      setUploadStatus(validation.error);
+      return;
+    }
+
     setProcessing(true);
     setUploadError(false);
     setUploadStatus("Reading and indexing your documents…");
@@ -954,10 +1001,15 @@ export default function App() {
                 onClick={() => setZoneOpen((o) => !o)}
                 aria-expanded={zoneOpen}
               >
-                <span>
-                  <span className="spark-char">✦</span> {files.length} document
-                  {files.length > 1 ? "s" : ""} indexed
+                <span className="summary-text">
+                  <span className="spark-char">✦</span>
+                  {files.length} document{files.length > 1 ? "s" : ""} indexed
                 </span>
+                {files.length > 0 && (
+                  <span className="summary-size">
+                    {formatBytes(files.reduce((sum, f) => sum + f.size, 0))}
+                  </span>
+                )}
                 <ChevronIcon open={zoneOpen} />
               </button>
             )}
@@ -982,22 +1034,31 @@ export default function App() {
                 </div>
 
                 {files.length > 0 && (
-                  <ul className="file-list">
-                    {files.map((f, idx) => (
-                      <li key={f.name}>
-                        <span className="file-index">{String(idx + 1).padStart(2, "0")}</span>
-                        <FileIcon />
-                        <span className="file-name">{f.name}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <>
+                    <p className={`upload-hint ${!uploadValidation.valid ? "error" : ""}`}>
+                      Upload limit: {MAX_UPLOAD_FILES} PDFs, max {formatBytes(MAX_UPLOAD_FILE_SIZE)} each,
+                      {" "}
+                      {formatBytes(MAX_TOTAL_UPLOAD_SIZE)} total.
+                      {!uploadValidation.valid && ` ${uploadValidation.error}`}
+                    </p>
+                    <ul className="file-list">
+                      {files.map((f, idx) => (
+                        <li key={`${f.name}-${f.size}`}> 
+                          <span className="file-index">{String(idx + 1).padStart(2, "0")}</span>
+                          <FileIcon />
+                          <span className="file-name">{f.name}</span>
+                          <span className="file-size">{formatBytes(f.size)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 )}
 
                 {files.length > 0 && !processing && (
                   <button
                     className="process-btn full"
                     onClick={handleProcess}
-                    disabled={processing}
+                    disabled={processing || !uploadValidation.valid}
                   >
                     Process documents
                   </button>

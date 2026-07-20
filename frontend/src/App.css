@@ -326,9 +326,10 @@
 
 /* Persistent "N documents indexed" toggle bar, shown once processed */
 .zone-summary {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) 12px;
+  gap: 0.5rem;
   align-items: center;
-  justify-content: space-between;
   width: 100%;
   background: transparent;
   border: none;
@@ -345,6 +346,18 @@
   border-bottom-color: var(--ink-line);
   padding-bottom: 0.7rem;
   margin-bottom: 0.6rem;
+}
+
+.summary-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-size {
+  color: var(--parchment-dim);
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .zone-summary .chevron {
@@ -373,6 +386,23 @@
 .zone-panel-inner {
   overflow: hidden;
   min-height: 0;
+}
+
+.upload-hint {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  margin-top: 0.8rem;
+  color: var(--parchment-dim);
+}
+
+.upload-hint.error {
+  color: var(--error);
+}
+
+.file-size {
+  color: var(--parchment-dim);
+  margin-left: auto;
+  font-feature-settings: "tnum" 1;
 }
 
 .status-line {

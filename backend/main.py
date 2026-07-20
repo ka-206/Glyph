@@ -59,6 +59,12 @@ app.add_middleware(
 sessions: dict[str, dict] = {}
 # Each entry: {"chain": ConversationalRetrievalChain, "last_used": float}
 
+# Upload limits help keep the local app responsive and prevent huge
+# document uploads from creating oversized vector stores in RAM.
+MAX_UPLOAD_FILES = 3
+MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024  # 10 MiB per file
+MAX_TOTAL_UPLOAD_SIZE = 30 * 1024 * 1024  # 30 MiB total per upload
+
 # How long an idle session is kept before it's swept away, so memory
 # doesn't grow forever from people who close the tab without hitting
 # "End chat". Not a hard timeout on activity — every /chat call refreshes
@@ -111,6 +117,36 @@ async def upload_pdfs(files: list[UploadFile] = File(...)):
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload limit is {MAX_UPLOAD_FILES} files. Please upload fewer PDFs.",
+        )
+
+    total_size = 0
+    for upload_file in files:
+        upload_file.file.seek(0, 2)
+        file_size = upload_file.file.tell()
+        upload_file.file.seek(0)
+
+        if file_size > MAX_UPLOAD_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Each file must be {MAX_UPLOAD_FILE_SIZE // (1024 * 1024)} MiB or smaller."
+                ),
+            )
+
+        total_size += file_size
+
+    if total_size > MAX_TOTAL_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Total upload size must be {MAX_TOTAL_UPLOAD_SIZE // (1024 * 1024)} MiB or smaller."
+            ),
+        )
 
     # UploadFile wraps the uploaded file; .file gives the raw file-like
     # object that PdfReader expects.
