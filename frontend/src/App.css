@@ -324,53 +324,7 @@
   color: var(--parchment-dim);
 }
 
-/* Persistent "N documents indexed" toggle bar, shown once processed */
-.zone-summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, auto) 12px;
-  gap: 0.5rem;
-  align-items: center;
-  width: 100%;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid transparent;
-  color: var(--parchment);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  cursor: pointer;
-  padding: 0.3rem 0;
-  transition: border-color 0.2s ease, padding 0.2s ease;
-}
-
-.zone-summary.open {
-  border-bottom-color: var(--ink-line);
-  padding-bottom: 0.7rem;
-  margin-bottom: 0.6rem;
-}
-
-.summary-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.summary-size {
-  color: var(--parchment-dim);
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-.zone-summary .chevron {
-  width: 12px;
-  height: 12px;
-  color: var(--parchment-dim);
-}
-
-.spark-char {
-  color: var(--gilt);
-}
-
-/* Accordion panel that expands/collapses under the summary bar. Uses
+/* Accordion panel wrapper for the upload zone contents. Uses
    the grid-template-rows trick so height animates smoothly without a
    hardcoded max-height, and never overlaps neighboring content. */
 .zone-panel {

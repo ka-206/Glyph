@@ -314,7 +314,6 @@ export default function App() {
   const [uploadStatus, setUploadStatus] = useState(() => savedState?.uploadStatus || ""); // status/error text
   const [uploadError, setUploadError] = useState(() => Boolean(savedState?.uploadError));
   const [dragOver, setDragOver] = useState(false);
-  const [zoneOpen, setZoneOpen] = useState(() => savedState?.zoneOpen !== false); // upload zone expanded vs collapsed summary
 
   const [messages, setMessages] = useState(() => savedState?.messages ?? []); // [{role, content}, ...]
   const [messageTimes, setMessageTimes] = useState(() => savedState?.messageTimes ?? []); // parallel array of Date, client-side only
@@ -345,11 +344,10 @@ export default function App() {
       sessionId,
       uploadStatus,
       uploadError,
-      zoneOpen,
       messages,
       messageTimes,
     });
-  }, [files, processed, sessionId, uploadStatus, uploadError, zoneOpen, messages, messageTimes]);
+  }, [files, processed, sessionId, uploadStatus, uploadError, messages, messageTimes]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -359,7 +357,6 @@ export default function App() {
         sessionId,
         uploadStatus,
         uploadError,
-        zoneOpen,
         messages,
         messageTimes,
       });
@@ -367,7 +364,7 @@ export default function App() {
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [files, processed, sessionId, uploadStatus, uploadError, zoneOpen, messages, messageTimes]);
+  }, [files, processed, sessionId, uploadStatus, uploadError, messages, messageTimes]);
 
   // Simulate indexing progress: the backend doesn't stream progress
   // events, so this eases toward 90% while the request is in flight and
@@ -488,7 +485,6 @@ export default function App() {
     setProcessing(false);
     setUploadStatus("");
     setUploadError(false);
-    setZoneOpen(true);
     setMessages([]);
     setMessageTimes([]);
     setQuestion("");
@@ -781,7 +777,6 @@ export default function App() {
       setProcessed(true);
       setSessionId(data.session_id);
       setUploadStatus(data.message);
-      setZoneOpen(false); // collapse into the "N documents indexed" summary bar
 
       // Fresh document set = fresh conversation. Seed it with a short
       // greeting so the chat area isn't empty right after processing.
@@ -995,26 +990,7 @@ export default function App() {
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            {processed && (
-              <button
-                className={`zone-summary ${zoneOpen ? "open" : ""}`}
-                onClick={() => setZoneOpen((o) => !o)}
-                aria-expanded={zoneOpen}
-              >
-                <span className="summary-text">
-                  <span className="spark-char">✦</span>
-                  {files.length} document{files.length > 1 ? "s" : ""} indexed
-                </span>
-                {files.length > 0 && (
-                  <span className="summary-size">
-                    {formatBytes(files.reduce((sum, f) => sum + f.size, 0))}
-                  </span>
-                )}
-                <ChevronIcon open={zoneOpen} />
-              </button>
-            )}
-
-            <div className={`zone-panel ${!processed || zoneOpen ? "open" : "closed"}`}>
+            <div className="zone-panel open">
               <div className="zone-panel-inner">
                 <div className="upload-row centered">
                   <p className="drop-text">
@@ -1054,7 +1030,7 @@ export default function App() {
                   </>
                 )}
 
-                {files.length > 0 && !processing && (
+                {files.length > 0 && !processing && !processed && (
                   <button
                     className="process-btn full"
                     onClick={handleProcess}
