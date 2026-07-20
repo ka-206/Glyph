@@ -25,7 +25,6 @@ from pydantic import BaseModel
 
 from rag import (
     get_pdf_text,
-    get_text_chunks,
     get_vector_store,
     get_conversation_chain,
 )
@@ -166,8 +165,7 @@ async def upload_pdfs(
 
     logging.debug("Extracted raw PDF text:\n%s", raw_text)
 
-    text_chunks = get_text_chunks(raw_text)
-    vector_store = get_vector_store(text_chunks)
+    vector_store, chunk_count = get_vector_store([f.file for f in files])
     conversation_chain = get_conversation_chain(vector_store)
 
     session_id = uuid.uuid4().hex
@@ -175,8 +173,8 @@ async def upload_pdfs(
 
     response = {
         "session_id": session_id,
-        "message": f"Processed {len(files)} file(s) into {len(text_chunks)} chunks.",
-        "chunks": len(text_chunks),
+        "message": f"Processed {len(files)} file(s) into {chunk_count} chunks.",
+        "chunks": chunk_count,
     }
 
     if debug:

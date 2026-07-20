@@ -1,185 +1,64 @@
-"""
-This file contains the "brain" of the app: turning PDFs into a searchable
-vector store, and building the conversational chain that answers questions.
 
-Nothing in this file knows about Streamlit OR FastAPI. It's pure logic.
-That's on purpose — it makes it reusable and easy to test.
-"""
-
-import os
-import re
+# rag.py
+import os,re
 from io import BytesIO
 from dotenv import load_dotenv
-from pypdf import PdfReader
 import fitz
-
+from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.prompts import PromptTemplate
 from langchain_classic.memory import ConversationBufferMemory
 from langchain_classic.chains import ConversationalRetrievalChain
-
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 
 load_dotenv()
+GROQ_API_KEY=os.getenv("GROQ_API_KEY")
+GROQ_MODEL=os.getenv("GROQ_MODEL_NAME")
 
-groq_api_key = os.getenv("GROQ_API_KEY")
-groq_model = os.getenv("GROQ_MODEL_NAME")
-
-if not groq_api_key:
-    raise ValueError("GROQ_API_KEY not found in .env")
-
-if not groq_model:
-    raise ValueError("GROQ_MODEL_NAME not found in .env")
-
-
-def clean_pdf_text(text):
-    """Clean extracted PDF text and preserve document structure."""
-    # Normalize line endings and remove repeated whitespace
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"[ \t]+", " ", text)
-
-    # Preserve paragraphs and headings while collapsing excessive blank lines.
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-
-    # Remove common PDF artifacts like repeated page numbers or headers/footers.
-    text = re.sub(r"^\s*Page\s+\d+\s*$", "", text, flags=re.MULTILINE)
-    text = re.sub(r"^\s*\d+\s*$", "", text, flags=re.MULTILINE)
-
-    # Remove any remaining isolated non-word lines that are likely artifacts.
-    lines = [line.strip() for line in text.split("\n")]
-    filtered_lines = [line for line in lines if len(line) > 1 or line.isalnum()]
-    return "\n".join(filtered_lines).strip()
-
-
-def _extract_text_with_pypdf(file_bytes):
-    try:
-        reader = PdfReader(BytesIO(file_bytes))
-    except Exception:
-        return ""
-
-    text = ""
-    for page_number, page in enumerate(reader.pages, start=1):
-        page_text = page.extract_text()
-        if page_text:
-            cleaned = clean_pdf_text(page_text)
-            if cleaned:
-                text += f"\n\n--- Page {page_number} ---\n\n" + cleaned
-    return text
-
-
-def _extract_text_with_pymupdf(file_bytes):
-    try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-    except Exception:
-        return ""
-
-    text = ""
-    for page_number in range(doc.page_count):
-        page = doc.load_page(page_number)
-        page_text = page.get_text("text")
-        if page_text:
-            cleaned = clean_pdf_text(page_text)
-            if cleaned:
-                text += f"\n\n--- Page {page_number + 1} ---\n\n" + cleaned
-    return text
-
+def clean_pdf_text(t):
+    t=t.replace("\r\n","\n").replace("\r","\n")
+    t=re.sub(r"[ \t]+"," ",t)
+    t=re.sub(r"\n{3,}","\n\n",t)
+    return "\n".join([x.strip() for x in t.split("\n") if x.strip()])
 
 def get_pdf_text(pdf_files):
-    """pdf_files: a list of file-like objects (anything PdfReader can open)."""
-    text = ""
+    out=""
+    for f in pdf_files:
+        f.seek(0); b=f.read()
+        try: doc=fitz.open(stream=b,filetype="pdf")
+        except: 
+            try:
+                r=PdfReader(BytesIO(b))
+                out+="\n".join(p.extract_text() or "" for p in r.pages)
+                continue
+            except: continue
+        for i,p in enumerate(doc):
+            txt=clean_pdf_text(p.get_text("text"))
+            if txt: out+=f"\n\n--- Page {i+1} ---\n\n{txt}"
+    return out.strip()
 
-    for pdf_file in pdf_files:
-        pdf_file.seek(0)
-        file_bytes = pdf_file.read()
-        if not file_bytes:
-            continue
+def get_vector_store(pdf_files):
+    splitter=RecursiveCharacterTextSplitter(chunk_size=1400,chunk_overlap=250,separators=["\n\n","\n",". "," ",""])
+    docs=[]; metas=[]
+    for f in pdf_files:
+        f.seek(0); doc=fitz.open(stream=f.read(),filetype="pdf")
+        name=getattr(f,"filename",getattr(f,"name","document.pdf"))
+        for pno,p in enumerate(doc,1):
+            txt=clean_pdf_text(p.get_text("text"))
+            for c,ch in enumerate(splitter.split_text(txt),1):
+                docs.append(ch); metas.append({"document":name,"page":pno,"chunk":c})
+    vs=FAISS.from_texts(docs,HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5",encode_kwargs={"normalize_embeddings":True}),metadatas=metas)
+    return vs,len(docs)
 
-        page_text = _extract_text_with_pymupdf(file_bytes)
-        if not page_text:
-            page_text = _extract_text_with_pypdf(file_bytes)
-
-        text += page_text
-
-    return text.strip()
-
-
-def get_text_chunks(text):
-    splitter = RecursiveCharacterTextSplitter(
-        separators=["\n\n", "\n", " ", ""],
-        chunk_size=800,
-        chunk_overlap=150,
-        length_function=len,
-    )
-
-    return splitter.split_text(text)
-
-
-def get_vector_store(text_chunks):
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-
-    metadata = [
-        {
-            "chunk_id": str(i + 1),
-            "source": f"chunk-{i+1}",
-        }
-        for i in range(len(text_chunks))
-    ]
-
-    return FAISS.from_texts(
-        texts=text_chunks,
-        embedding=embeddings,
-        metadatas=metadata,
-    )
-
-
-def get_conversation_chain(vector_store):
-    llm = ChatGroq(
-        groq_api_key=groq_api_key,
-        model_name=groq_model,
-        temperature=0,
-    )
-
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        return_messages=True,
-    )
-
-    template = """
-Use the following context and chat history to answer the question.
-
-If you don't know the answer, simply say you don't know.
-
-Context:
-{context}
-
-Chat History:
-{chat_history}
-
-Question:
-{question}
-
-Helpful Answer:
-"""
-
-    prompt = PromptTemplate(
-        template=template,
-        input_variables=[
-            "context",
-            "chat_history",
-            "question",
-        ],
-    )
-
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
-
+def get_conversation_chain(vs):
+    mem=ConversationBufferMemory(memory_key="chat_history",return_messages=True,output_key="answer")
+    prompt=PromptTemplate(input_variables=["context","chat_history","question"],template="Use only the context. If unknown, say you don't know.\n\nContext:\n{context}\n\nChat History:\n{chat_history}\n\nQuestion:{question}\nAnswer:")
     return ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=memory,
-        combine_docs_chain_kwargs={"prompt": prompt},
-        verbose=True,
-    )
+        llm=ChatGroq(groq_api_key=GROQ_API_KEY,model_name=GROQ_MODEL,temperature=0),
+        retriever=vs.as_retriever(search_type="mmr",search_kwargs={"k":6,"fetch_k":20}),
+        memory=mem,
+        combine_docs_chain_kwargs={"prompt":prompt},
+        return_source_documents=True,
+        verbose=True)
