@@ -8,8 +8,10 @@ That's on purpose — it makes it reusable and easy to test.
 
 import os
 import re
+from io import BytesIO
 from dotenv import load_dotenv
 from pypdf import PdfReader
+import fitz
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.prompts import PromptTemplate
@@ -51,20 +53,54 @@ def clean_pdf_text(text):
     return "\n".join(filtered_lines).strip()
 
 
+def _extract_text_with_pypdf(file_bytes):
+    try:
+        reader = PdfReader(BytesIO(file_bytes))
+    except Exception:
+        return ""
+
+    text = ""
+    for page_number, page in enumerate(reader.pages, start=1):
+        page_text = page.extract_text()
+        if page_text:
+            cleaned = clean_pdf_text(page_text)
+            if cleaned:
+                text += f"\n\n--- Page {page_number} ---\n\n" + cleaned
+    return text
+
+
+def _extract_text_with_pymupdf(file_bytes):
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+    except Exception:
+        return ""
+
+    text = ""
+    for page_number in range(doc.page_count):
+        page = doc.load_page(page_number)
+        page_text = page.get_text("text")
+        if page_text:
+            cleaned = clean_pdf_text(page_text)
+            if cleaned:
+                text += f"\n\n--- Page {page_number + 1} ---\n\n" + cleaned
+    return text
+
+
 def get_pdf_text(pdf_files):
     """pdf_files: a list of file-like objects (anything PdfReader can open)."""
     text = ""
 
     for pdf_file in pdf_files:
-        reader = PdfReader(pdf_file)
+        pdf_file.seek(0)
+        file_bytes = pdf_file.read()
+        if not file_bytes:
+            continue
 
-        for page_number, page in enumerate(reader.pages, start=1):
-            page_text = page.extract_text()
+        page_text = _extract_text_with_pymupdf(file_bytes)
+        if not page_text:
+            page_text = _extract_text_with_pypdf(file_bytes)
 
-            if page_text:
-                cleaned = clean_pdf_text(page_text)
-                if cleaned:
-                    text += f"\n\n--- Page {page_number} ---\n\n" + cleaned
+        text += page_text
 
     return text.strip()
 

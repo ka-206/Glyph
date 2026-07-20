@@ -14,11 +14,12 @@ interactive API tester for you. This is one of the best ways to learn
 what your API does before you even touch the frontend.
 """
 
+import logging
 import time
 import uuid
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -104,7 +105,10 @@ async def health():
 
 
 @app.post("/upload")
-async def upload_pdfs(files: list[UploadFile] = File(...)):
+async def upload_pdfs(
+    files: list[UploadFile] = File(...),
+    debug: bool = Query(False, description="Return the raw extracted PDF text for debugging."),
+):
     """
     Accepts one or more PDF files, processes them into a vector store,
     and builds a fresh conversation chain under a brand-new session_id.
@@ -112,6 +116,8 @@ async def upload_pdfs(files: list[UploadFile] = File(...)):
     Each call to /upload starts a new session — processing documents is
     already "start fresh" from the user's point of view, so there's no
     need to accept an existing session_id here.
+
+    If debug=true is provided, the raw extracted PDF text is included in the response.
     """
     _cleanup_sessions()
 
@@ -158,6 +164,8 @@ async def upload_pdfs(files: list[UploadFile] = File(...)):
             detail="Could not extract any text from the uploaded PDF(s).",
         )
 
+    logging.debug("Extracted raw PDF text:\n%s", raw_text)
+
     text_chunks = get_text_chunks(raw_text)
     vector_store = get_vector_store(text_chunks)
     conversation_chain = get_conversation_chain(vector_store)
@@ -165,11 +173,16 @@ async def upload_pdfs(files: list[UploadFile] = File(...)):
     session_id = uuid.uuid4().hex
     sessions[session_id] = {"chain": conversation_chain, "last_used": time.time()}
 
-    return {
+    response = {
         "session_id": session_id,
         "message": f"Processed {len(files)} file(s) into {len(text_chunks)} chunks.",
         "chunks": len(text_chunks),
     }
+
+    if debug:
+        response["raw_text"] = raw_text
+
+    return response
 
 
 @app.post("/chat")

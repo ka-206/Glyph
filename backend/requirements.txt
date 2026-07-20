@@ -3,6 +3,7 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 pypdf
+PyMuPDF
 langchain-text-splitters
 langchain-classic
 langchain-community
