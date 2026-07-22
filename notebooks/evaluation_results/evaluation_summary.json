@@ -1,0 +1,15 @@
+{
+  "project": "Glyph",
+  "response_accuracy_pct": 95.0,
+  "response_accuracy_partial_credit_pct": 87.5,
+  "retrieval_relevance_pct": 85.0,
+  "average_response_latency_sec": 3.1868419599999998,
+  "user_satisfaction_5": 4.4,
+  "num_questions": 20,
+  "section_9_reported": {
+    "response_accuracy_pct": 93.0,
+    "retrieval_relevance_pct": 100.0,
+    "average_latency_sec": 3.15,
+    "user_satisfaction_5": 4.7
+  }
+}
